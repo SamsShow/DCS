@@ -10,11 +10,25 @@ import LenderPage from "./components/lenders";
 const WalletButton = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
-  const mockAddress = "0x1234...5678";
+  const [walletAddress, setWalletAddress] = useState("");
 
-  const handleConnect = () => {
-    setIsConnected(true);
+  const handleConnect = async () => {
+    if (window.ethereum) {
+      try {
+        const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+        setWalletAddress(accounts[0]);
+        setIsConnected(true);
+      } catch (error) {
+        console.error("Error connecting to wallet:", error);
+      }
+    } else {
+      console.error("MetaMask is not installed");
+    }
   };
+
+  // const handleConnect = () => {
+  //   setIsConnected(true);
+  // };
 
   const handleDisconnect = () => {
     setIsConnected(false);
@@ -43,7 +57,7 @@ const WalletButton = () => {
         className="flex items-center space-x-2 bg-emerald-100 text-emerald-800 px-4 py-2 rounded-lg font-medium"
       >
         <Wallet size={20} />
-        <span>{mockAddress}</span>
+        <span>{walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}</span>
         <ChevronDown size={20} className={`transform transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </motion.button>
 
