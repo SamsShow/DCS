@@ -3,12 +3,12 @@ import { ethers } from 'ethers';
 import { motion } from 'framer-motion';
 import { 
   Wallet, 
-  PiggyBank, 
-  BarChart3,
+  Timer, 
+  RefreshCw, 
   AlertCircle,
-  Plus,
-  RefreshCw,
-  List
+  ChevronUp,
+  PiggyBank,
+  BadgeCheck
 } from 'lucide-react';
 import { contractAddress, contractABI } from '../config/contractAddress';
 
@@ -70,99 +70,152 @@ const ErrorMessage = ({ message }) => (
   </motion.div>
 );
 
-const LenderPage = () => {
+const LendersPage = () => {
   const [contract, setContract] = useState(null);
-  const [poolId, setPoolId] = useState('');
-  const [amount, setAmount] = useState('');
-  const [poolCount, setPoolCount] = useState(0);
-  const [riskPools, setRiskPools] = useState([]);
-  const [error, setError] = useState('');
+  const [userAddress, setUserAddress] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [pools, setPools] = useState([]);
+  const [depositAmount, setDepositAmount] = useState('');
+  const [selectedPoolId, setSelectedPoolId] = useState('');
+  const [riskLevel, setRiskLevel] = useState('');
+  const [poolCount, setPoolCount] = useState(0);
 
   useEffect(() => {
     const initializeContract = async () => {
-      if (window.ethereum) {
-        try {
-          await window.ethereum.request({ method: 'eth_requestAccounts' });
-          const provider = new ethers.BrowserProvider(window.ethereum);
-          const signer = await provider.getSigner();
-          const contractInstance = new ethers.Contract(contractAddress, contractABI, signer);
-          setContract(contractInstance);
-        } catch (error) {
-          console.error('Error initializing contract:', error);
-          setError("Failed to initialize contract. Please check your connection and try again.");
+      try {
+        if (!window.ethereum) {
+          throw new Error('Please install MetaMask to use this dApp');
         }
-      } else {
-        setError("Please install MetaMask!");
+  
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        setUserAddress(accounts[0]);
+        
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+        
+        const contractInstance = new ethers.Contract(
+          contractAddress,
+          contractABI,
+          signer
+        );
+        
+        setContract(contractInstance);
+        await fetchPoolCount(contractInstance);
+  
+        window.ethereum.on('accountsChanged', (accounts) => {
+          setUserAddress(accounts[0]);
+          window.location.reload();
+        });
+        window.ethereum.on('chainChanged', () => window.location.reload());
+  
+      } catch (err) {
+        setError(err.message || 'Failed to initialize contract connection');
+        console.error(err);
       }
     };
-
+  
     initializeContract();
   }, []);
+
+  const fetchPoolCount = async (contractInstance) => {
+    try {
+      setLoading(true);
+      // Access poolCount as a public variable
+      const count = await contractInstance.poolCount();
+      const poolCountNumber = Number(count);
+      setPoolCount(poolCountNumber);
+      await fetchPools(contractInstance, poolCountNumber);
+    } catch (err) {
+      setError('Failed to fetch pool count');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchPools = async (contractInstance, count) => {
+    try {
+      setLoading(true);
+      const poolsData = [];
+      
+      for (let i = 0; i < count; i++) {
+        const poolDetails = await contractInstance.getPoolDetails(i);
+        poolsData.push({
+          id: i,
+          totalFunds: poolDetails[0],
+          availableFunds: poolDetails[1],
+          riskLevel: poolDetails[2]
+        });
+      }
+      
+      setPools(poolsData);
+    } catch (err) {
+      setError('Failed to fetch pool details');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreatePool = async () => {
+    try {
+      setLoading(true);
+      setError('');
+
+      if (!contract) throw new Error('Contract not initialized');
+      if (!riskLevel || !depositAmount) throw new Error('Please fill in all fields');
+
+      const amountInWei = ethers.parseEther(depositAmount);
+      
+      // Create a new risk pool
+      const tx = await contract.createRiskPool(
+        riskLevel,
+        amountInWei,
+        { value: amountInWei }
+      );
+      await tx.wait();
+
+      setRiskLevel('');
+      setDepositAmount('');
+      alert('Pool created successfully!');
+      
+      // Refresh pools
+      await fetchPoolCount(contract);
+    } catch (err) {
+      setError(err.message || 'Failed to create pool');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleAddFunds = async () => {
     try {
       setLoading(true);
       setError('');
 
-      if (!contract) throw new Error('Contract not initialized. Please try again.');
-      if (!poolId || !amount) throw new Error('Please fill in all fields');
+      if (!contract) throw new Error('Contract not initialized');
+      if (!depositAmount || !selectedPoolId) throw new Error('Please fill in all fields');
 
-      const amountInWei = ethers.parseEther(amount);
-      const tx = await contract.addFunds(poolId, amountInWei);
+      const amountInWei = ethers.parseEther(depositAmount);
+      
+      // Add funds to existing pool
+      const tx = await contract.addFundsToPool(
+        selectedPoolId,
+        amountInWei,
+        { value: amountInWei }
+      );
       await tx.wait();
 
-      setPoolId('');
-      setAmount('');
+      setDepositAmount('');
+      setSelectedPoolId('');
       alert('Funds added successfully!');
+      
+      // Refresh pools
+      await fetchPoolCount(contract);
     } catch (err) {
       setError(err.message || 'Failed to add funds');
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGetRiskPools = async () => {
-    try {
-      setLoading(true);
-      setError('');
-
-      if (!contract) throw new Error('Contract not initialized. Please try again.');
-
-      // Assuming the contract has a method to get all risk pools
-      // If not, we might need to adjust this part based on the actual contract structure
-      const poolCount = await contract.poolCount();
-      let pools = [];
-      for (let i = 0; i < poolCount; i++) {
-        const pool = await contract.riskPools(i);
-        pools.push({
-          id: i,
-          totalFunds: pool.totalFunds,
-          availableFunds: pool.availableFunds,
-          riskLevel: pool.riskLevel
-        });
-      }
-      setRiskPools(pools);
-    } catch (err) {
-      setError(err.message || 'Failed to fetch risk pools');
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGetPoolCount = async () => {
-    try {
-      setLoading(true);
-      setError('');
-
-      if (!contract) throw new Error('Contract not initialized. Please try again.');
-
-      const count = await contract.poolCount();
-      setPoolCount(count.toNumber());
-    } catch (err) {
-      setError(err.message || 'Failed to fetch pool count');
       console.error(err);
     } finally {
       setLoading(false);
@@ -181,102 +234,115 @@ const LenderPage = () => {
         className="flex items-center space-x-4 mb-8"
       >
         <PiggyBank size={32} className="text-emerald-600" />
-        <h2 className="text-3xl font-bold text-gray-900">Lender Dashboard</h2>
+        <h2 className="text-3xl font-bold text-gray-900">Risk Pools</h2>
       </motion.div>
 
       {error && <ErrorMessage message={error} />}
 
-      <div className="grid md:grid-cols-2 gap-6">
-        <Card>
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-semibold text-gray-900">Add Funds to Pool</h3>
-            <Wallet className="text-emerald-600" size={24} />
-          </div>
-          <div className="space-y-4">
-            <Input
-              value={poolId}
-              onChange={(e) => setPoolId(e.target.value)}
-              placeholder="Pool ID"
-              disabled={loading}
-            />
-            <Input
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="Amount (in ETH)"
-              disabled={loading}
-            />
-            <Button
-              onClick={handleAddFunds}
-              disabled={loading}
-              icon={Plus}
-            >
-              {loading ? 'Processing...' : 'Add Funds'}
-            </Button>
-          </div>
-        </Card>
+      <Card>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-semibold text-gray-900">Create New Pool</h3>
+          <Wallet className="text-emerald-600" size={24} />
+        </div>
+        <div className="space-y-4">
+          <Input
+            value={riskLevel}
+            onChange={(e) => setRiskLevel(e.target.value)}
+            placeholder="Risk Level (1-100)"
+            type="number"
+            disabled={loading}
+          />
+          <Input
+            value={depositAmount}
+            onChange={(e) => setDepositAmount(e.target.value)}
+            placeholder="Initial Funds (ETH)"
+            disabled={loading}
+          />
+          <Button
+            onClick={handleCreatePool}
+            disabled={loading}
+            icon={ChevronUp}
+          >
+            {loading ? 'Processing...' : 'Create Pool'}
+          </Button>
+        </div>
+      </Card>
 
-        <Card>
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-semibold text-gray-900">Pool Information</h3>
-            <BarChart3 className="text-emerald-600" size={24} />
-          </div>
-          <div className="space-y-4">
-            <Button
-              onClick={handleGetPoolCount}
-              disabled={loading}
-              variant="secondary"
-              icon={RefreshCw}
-            >
-              {loading ? 'Processing...' : 'Get Pool Count'}
-            </Button>
-            {poolCount > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-emerald-50 rounded-xl p-6 text-center"
-              >
-                <p className="text-sm text-emerald-600 mb-2">Total number of pools</p>
-                <p className="text-4xl font-bold text-emerald-800">{poolCount}</p>
-              </motion.div>
-            )}
-          </div>
-        </Card>
+      <Card>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-semibold text-gray-900">Add Funds to Pool</h3>
+          <Wallet className="text-emerald-600" size={24} />
+        </div>
+        <div className="space-y-4">
+          <select
+            value={selectedPoolId}
+            onChange={(e) => setSelectedPoolId(e.target.value)}
+            className="w-full px-4 py-3 rounded-xl border border-emerald-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all duration-300"
+          >
+            <option value="">Select a Pool</option>
+            {pools.map((pool) => (
+              <option key={pool.id} value={pool.id}>
+                Pool #{pool.id} (Risk Level: {pool.riskLevel.toString()})
+              </option>
+            ))}
+          </select>
+          <Input
+            value={depositAmount}
+            onChange={(e) => setDepositAmount(e.target.value)}
+            placeholder="Amount to Add (ETH)"
+            disabled={loading}
+          />
+          <Button
+            onClick={handleAddFunds}
+            disabled={loading}
+            icon={ChevronUp}
+          >
+            {loading ? 'Processing...' : 'Add Funds'}
+          </Button>
+        </div>
+      </Card>
 
-        <Card className="md:col-span-2">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-semibold text-gray-900">Risk Pools</h3>
-            <List className="text-emerald-600" size={24} />
-          </div>
-          <div className="space-y-4">
-            <Button
-              onClick={handleGetRiskPools}
-              disabled={loading}
-              variant="secondary"
-              icon={RefreshCw}
-            >
-              {loading ? 'Processing...' : 'Get Risk Pools'}
-            </Button>
-            {riskPools.length > 0 && (
+      <Card>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-semibold text-gray-900">Available Pools</h3>
+          <RefreshCw
+            className={`text-emerald-600 cursor-pointer ${loading ? 'animate-spin' : ''}`}
+            size={24}
+            onClick={() => fetchPoolCount(contract)}
+          />
+        </div>
+        <div className="space-y-4">
+          {pools.length === 0 ? (
+            <p className="text-gray-500 text-center py-4">No pools available</p>
+          ) : (
+            pools.map((pool) => (
               <motion.div
-                initial={{ opacity: 0, y: 10 }}
+                key={pool.id}
+                initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="space-y-4"
+                className="bg-emerald-50 rounded-xl p-4"
               >
-                {riskPools.map((pool, index) => (
-                  <div key={index} className="bg-emerald-50 rounded-xl p-6">
-                    <p className="text-lg font-semibold text-emerald-800">Pool ID: {pool.id.toString()}</p>
-                    <p className="text-emerald-600">Total Funds: {ethers.formatEther(pool.totalFunds)} ETH</p>
-                    <p className="text-emerald-600">Available Funds: {ethers.formatEther(pool.availableFunds)} ETH</p>
-                    <p className="text-emerald-600">Risk Level: {pool.riskLevel.toString()}</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <h4 className="font-semibold">Pool #{pool.id}</h4>
+                    <p className="text-sm text-gray-600">Risk Level: {pool.riskLevel.toString()}</p>
                   </div>
-                ))}
+                  <div className="text-right">
+                    <p className="font-semibold text-emerald-600">
+                      {ethers.formatEther(pool.totalFunds)} ETH Total
+                    </p>
+                    <p className="text-sm text-emerald-500">
+                      {ethers.formatEther(pool.availableFunds)} ETH Available
+                    </p>
+                  </div>
+                </div>
               </motion.div>
-            )}
-          </div>
-        </Card>
-      </div>
+            ))
+          )}
+        </div>
+      </Card>
     </motion.div>
   );
 };
 
-export default LenderPage;
+export default LendersPage;
